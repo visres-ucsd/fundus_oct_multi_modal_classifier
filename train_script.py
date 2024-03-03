@@ -36,7 +36,7 @@ import tensorflow as tf
 
 
 # Impoving code reproducability...
-seed = 100
+seed = 10
 np.random.seed(seed)
 torch.manual_seed(seed)
 
