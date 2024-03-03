@@ -1,11 +1,7 @@
 # Basic Imports.....
-from copy import copy
-import datetime
-from glob import glob
-import json
 import math
-import multiprocessing
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from pathlib import Path
 import random
 import urllib.request
@@ -14,7 +10,11 @@ import numpy as np
 from PIL import Image
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, roc_auc_score, f1_score
 import pickle
+import warnings
+warnings.filterwarnings('always')
+
 
 # pipeline specific imports..
 from constants import *
@@ -33,9 +33,9 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 torchvision.disable_beta_transforms_warning()
 import torchvision.transforms.v2  as transforms
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
 
-import tensorflow as tf
+# tensorboard related imports...
+from torch.utils.tensorboard import SummaryWriter
 
 
 # Impoving code reproducability...
@@ -65,13 +65,13 @@ if not os.path.exists(save_dir_name + model_name):
 
 # Setting up tensorboard logging....
 logdir = save_dir_name + model_name + "/logs/scalars/" + model_save_name
-train_summary_writer = tf.summary.create_file_writer(logdir)
+summary_writer = SummaryWriter(logdir)
 
 print("#"*30)
 print("Splitting the dataset ....")
 train_index, val_index, _, _ = train_test_split(list(range(len(patient_ids))), 
                                                 [1]*len(patient_ids), 
-                                                test_size=0.2, 
+                                                test_size=0.1, 
                                                 random_state = seed)
 
 # splitting based on patient ids to avoid any data contamination....
@@ -172,7 +172,7 @@ criterion=torch.hub.load('adeelh/pytorch-multi-class-focal-loss',
 # Observe that all parameters are being optimized
 optimizer_ft = optim.SGD(base_model.parameters(), lr = pre_freeze_lr, momentum=0.9)
 
-# Decay LR by a factor of 0.1 every 7 epochs
+# Decay LR by a factor of 0.1 every 12 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 print("#"*30)
 
@@ -184,18 +184,24 @@ def train_model(model,
                 num_epochs=25):
 
     since = time.time()
+    best_f1_score = 0.0
    
     # defining metric holding variables....
-    train_epoch_loss = 0.0
-    train_epoch_acc = 0.0
-    epoch_wise_loss = []
-    epoch_wise_precision = []
-    epoch_wise_recall = []
-    epoch_wise_f1 = []
-    epoch_wise_acc = []
-    epoch_wise_auc_1 = []
-    epoch_wise_auc_2 = []
-    epoch_wise_auc_3 = []
+    train_epoch_loss = []
+    train_epoch_acc  = []
+
+    val_epoch_loss = []
+    val_epoch_acc  = []
+    val_epoch_prec_h = []
+    val_epoch_prec_s = []
+    val_epoch_prec_g = []
+    val_epoch_recall_h = []
+    val_epoch_recall_s = []
+    val_epoch_recall_g = []
+    val_epoch_f1 = []
+    val_epoch_auc_h = []
+    val_epoch_auc_s = []
+    val_epoch_auc_g = []
 
     # Training Epochs....
     for epoch in range(num_epochs):
@@ -206,6 +212,9 @@ def train_model(model,
         model.train() 
         running_loss = 0.0
         running_corrects = 0
+        random_batches_train = random.sample(range(len(train_dataloader)), num_train_samples_viz)
+        random_collection_train_sample = []
+        cnt = 0
 
         for inputs, labels in tqdm(train_dataloader, position = 0, leave = True):
             
@@ -231,18 +240,33 @@ def train_model(model,
             # statistics
             running_loss += loss.item() * inputs.size(0)
             running_corrects += torch.sum(preds == n_labels)
+            if cnt in random_batches_train:
+                random_collection_train_sample.append(inputs.detach().cpu()[0])
+            cnt+=1
+
+        
 
         # learning rate steps....
         scheduler.step()
 
         # averaging epoch loss...
-        train_epoch_loss = running_loss / training_data.total_size
-        train_epoch_acc = running_corrects.double() / training_data.total_size
+        train_epoch_loss.append(running_loss / training_data.total_size)
+        train_epoch_acc.append(running_corrects.double() / training_data.total_size)
 
         # Validation step...
         model.eval()  
         running_loss = 0.0
         running_corrects = 0
+        running_prec_h = 0.0
+        running_prec_s = 0.0
+        running_prec_g = 0.0
+        running_recall_h = 0.0
+        running_recall_s = 0.0
+        running_recall_g = 0.0
+        running_f1 = 0.0
+        running_auc_h = 0.0
+        running_auc_s = 0.0
+        running_auc_g = 0.0
 
         for inputs, labels in tqdm(valid_dataloader, position = 0, leave = True):
             # moving tensors to gpu....
@@ -261,15 +285,103 @@ def train_model(model,
             # statistics
             running_loss += loss.item() * inputs.size(0)
             running_corrects += torch.sum(preds == n_labels)
+
+            # other metrics class wise computation....
+            running_prec_h += precision_score(y_true = labels.detach().cpu().numpy()[:,0],
+                                              y_pred = [1 if (i==0) else 0 for i in preds.detach().cpu().numpy()],
+                                              zero_division = 0.0)
+
+            running_prec_s += precision_score(y_true = labels.detach().cpu().numpy()[:,1],
+                                              y_pred = [1 if (i==1) else 0 for i in preds.detach().cpu().numpy()],
+                                              zero_division = 0.0)
+
+            running_prec_g += precision_score(y_true = labels.detach().cpu().numpy()[:,2],
+                                              y_pred = [1 if (i==2) else 0 for i in preds.detach().cpu().numpy()],
+                                              zero_division = 0.0)
+
+            #######################################################
+            running_recall_h += recall_score(y_true = labels.detach().cpu().numpy()[:,0],
+                                             y_pred = [1 if (i==0) else 0 for i in preds.detach().cpu().numpy()],
+                                             zero_division = 0.0)
+
+            running_recall_s += recall_score(y_true = labels.detach().cpu().numpy()[:,1],
+                                             y_pred = [1 if (i==1) else 0 for i in preds.detach().cpu().numpy()],
+                                             zero_division = 0.0)
+
+            running_recall_g += recall_score(y_true = labels.detach().cpu().numpy()[:,2],
+                                             y_pred = [1 if (i==2) else 0 for i in preds.detach().cpu().numpy()],
+                                             zero_division = 0.0)
+
+            running_f1 += f1_score(y_true = n_labels.detach().cpu().numpy(),
+                                   y_pred = preds.detach().cpu().numpy(),
+                                   average = "macro")
+
+            #######################################################
+            try:
+                running_auc_h += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,0],
+                                               y_score = outputs.detach().cpu().numpy()[:,0])
+            except:
+                running_auc_h += 0
+
+            try:
+                running_auc_s += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,1],
+                                               y_score = outputs.detach().cpu().numpy()[:,1])
+            except:
+                running_auc_s +=0
+
+            try:
+                running_auc_g += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,2],
+                                               y_score = outputs.detach().cpu().numpy()[:,2])
+            except:
+                running_auc_g += 0
         
-        val_epoch_loss = running_loss / validation_data.total_size
-        val_epoch_acc = running_corrects.double() / validation_data.total_size
+
+        # Averaging Metric Values for plotting.....
+        val_epoch_loss.append(running_loss / validation_data.total_size)
+        val_epoch_acc.append(running_corrects.double() / validation_data.total_size)
+        val_epoch_prec_h.append(running_prec_h /len(valid_dataloader))
+        val_epoch_prec_s.append(running_prec_s /len(valid_dataloader))
+        val_epoch_prec_g.append(running_prec_g /len(valid_dataloader))
+        val_epoch_recall_h.append(running_recall_h /len(valid_dataloader))
+        val_epoch_recall_s.append(running_recall_s /len(valid_dataloader))
+        val_epoch_recall_g.append(running_recall_g /len(valid_dataloader))
+        val_epoch_f1.append(running_f1 / len(valid_dataloader))
+        val_epoch_auc_h.append(running_auc_h /len(valid_dataloader))
+        val_epoch_auc_s.append(running_auc_s /len(valid_dataloader))
+        val_epoch_auc_g.append(running_auc_g /len(valid_dataloader))
+
+        # Tensorboard metric plotting....
+        summary_writer.add_scalar('Loss/train', train_epoch_loss[-1], epoch)
+        summary_writer.add_scalar('Acc/train', train_epoch_acc[-1], epoch)
+        summary_writer.add_scalar('Loss/valid', val_epoch_loss[-1], epoch)
+        summary_writer.add_scalar('Acc/valid', val_epoch_acc[-1], epoch)
+        summary_writer.add_scalar('Healthy Precision/valid', val_epoch_prec_h[-1], epoch)
+        summary_writer.add_scalar('Suspect Precision/valid', val_epoch_prec_s[-1], epoch)
+        summary_writer.add_scalar('Glaucoma Precision/valid', val_epoch_prec_g[-1], epoch)
+        summary_writer.add_scalar('Healthy Recall/valid', val_epoch_recall_h[-1], epoch)
+        summary_writer.add_scalar('Suspect Recall/valid', val_epoch_recall_s[-1], epoch)
+        summary_writer.add_scalar('Glaucoma Recall/valid', val_epoch_recall_g[-1], epoch)
+        summary_writer.add_scalar('F1 score overall/valid', val_epoch_f1[-1], epoch)
+        summary_writer.add_scalar('Health   AUC/valid', val_epoch_auc_h[-1], epoch)
+        summary_writer.add_scalar('Suspect  AUC/valid', val_epoch_auc_s[-1], epoch)
+        summary_writer.add_scalar('Glaucoma AUC/valid', val_epoch_auc_g[-1], epoch)
+        #summary_writer.add_images('Augmented Images/ Train', torch.Tensor(random_collection_train_sample), epoch)
 
 
+        print("Training   loss : {} | Training   Accuracy : {}".format(train_epoch_loss[-1], train_epoch_acc[-1]))
+        print("Validation loss : {} | Validation Accuracy : {}".format(val_epoch_loss[-1], val_epoch_acc[-1]))
 
-        print("Training   loss : {} | Training   Accuracy : {}".format(train_epoch_loss, train_epoch_acc))
-        print("Validation loss : {} | Validation Accuracy : {}".format(val_epoch_loss, val_epoch_acc))
+        if best_f1_score < val_epoch_f1[-1]:
+            print("Saving the best model.....")
+            torch.save(model.state_dict(), save_dir_name + model_name + "/best_f1_score_model.pt")
+            best_f1_score = val_epoch_f1[-1]
 
+            print("Validation Precision -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_prec_h[-1], val_epoch_prec_s[-1], val_epoch_prec_g[-1]))
+            print("Validation Recall    -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_recall_h[-1], val_epoch_recall_s[-1], val_epoch_recall_g[-1]))
+            print("Validation AUC       -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_auc_h[-1], val_epoch_auc_s[-1], val_epoch_auc_g[-1]))
+            print("Validation F1 Score  : {}".format(val_epoch_f1[-1]))
+
+      
 
 # Performing Training steps....
 model_ft = train_model(model = base_model, 
