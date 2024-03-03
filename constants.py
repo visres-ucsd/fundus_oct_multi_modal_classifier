@@ -4,8 +4,8 @@
 modality_type = "fundus"
 project_dir = "/tscc/nfs/home/vejoshi/oct_fundus_project/"
 dataset_dir = project_dir + "oct_fundus_dataset/"
-dataset_path = os.path.join(dataset_dir,"fundus_images") if modality_type == "fundus" else os.path.join(dataset_dir,"oct_images")
-label_path   = os.path.join(dataset_dir, "fundus_labels.pickle")
+dataset_path = dataset_dir + "fundus_images/" if modality_type == "fundus" else dataset_dir+"oct_images/"
+label_path   = dataset_dir + "fundus_labels.pickle"
 
 # training constants
 training_nature = "supervised_only"
@@ -15,7 +15,7 @@ unfreeze_perc = 0.3
 frozen_epochs = 40 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
 pre_freeze_lr = 1e-03
 learning_rate = 1e-03
-dropout = 0.5
+dropout = 0.3
 l2_reg = 1e-02
 pool_type = "max"
 dense_1 = 64

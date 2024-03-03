@@ -14,11 +14,12 @@ import numpy as np
 from PIL import Image
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
+import pickle
 
 # pipeline specific imports..
-import constants
-import model
-import data_loader
+from constants import *
+from model import *
+from data_loader import *
 
 # PyTorch related imports....
 import timm
@@ -32,6 +33,8 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 torchvision.disable_beta_transforms_warning()
 import torchvision.transforms.v2  as transforms
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
+
 import tensorflow as tf
 
 
@@ -64,6 +67,7 @@ if not os.path.exists(save_dir_name + model_name):
 logdir = save_dir_name + model_name + "/logs/scalars/" + model_save_name
 train_summary_writer = tf.summary.create_file_writer(logdir)
 
+print("#"*30)
 print("Splitting the dataset ....")
 train_index, val_index, _, _ = train_test_split(list(range(len(patient_ids))), 
                                                 [1]*len(patient_ids), 
@@ -88,7 +92,7 @@ for i in os.listdir(dataset_path):
         val_cnt[label_dict[i]] += 1
         valid_files.append(os.path.join(dataset_path,i))
 
-
+print("#"*30)
 print("Label distribution :")
 print("Training split   : Healthy : {} | Suspects : {} | Glaucoma : {}".format(train_cnt["healthy"] / len(train_files),
                                                                                train_cnt["suspects"] / len(train_files),
@@ -98,12 +102,13 @@ print("Validation split : Healthy : {} | Suspects : {} | Glaucoma : {}".format(v
                                                                              val_cnt["suspects"] / len(valid_files),
                                                                              val_cnt["glaucoma"] / len(valid_files)))
 
+print("#"*30)
 # building base model
 pre_proc_func = None
 if model_name in ['resnet','mobilenet','densenet']:
     # imagenet pre-processing pipeline...
-    pre_proc_func =  transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                          std=[0.229, 0.224, 0.225])
+    pre_proc_func =  transforms.Compose([transforms.ToTensor(),
+                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])])
 
 # building dataloaders....
 training_data = GenerateDataset(image_files = train_files,
@@ -138,19 +143,39 @@ print("Number of Validation steps : ",len(valid_dataloader))
 # Make experimental changes in it....
 base_model = build_model()
 
+# Freezing the base model & only unfreezing the top added layers......
+trainable_cnt = 0
+total_cnt = 0
+for nm, param in base_model.named_parameters():
+    l_name = str(nm).split(".")[0]
+    if (l_name in ["layer_1","layer_2","layer_3","final_layer"]) & (param.requires_grad):
+        param.requires_grad = True
+        trainable_cnt+=1
+    else:
+        param.requires_grad = False
+
+    total_cnt+=1
+
+print("#"*30)
+print("Percentage of trainable parameters : {:.2f}".format((trainable_cnt / total_cnt)*100))
+base_model = base_model.to(device)
+
+
 # defining loss & lr decay
-criterion torch.hub.load('adeelh/pytorch-multi-class-focal-loss',
+criterion=torch.hub.load('adeelh/pytorch-multi-class-focal-loss',
                           model='FocalLoss',
-                          alpha = torch.tensor(list(training_data.class_weights.values())),
+                          alpha = torch.tensor(list(training_data.class_weights.values())).to(device),
                           gamma=2,
                           reduction='mean',
                           force_reload=False)
 
 # Observe that all parameters are being optimized
-optimizer_ft = optim.SGD(model_ft.parameters(), lr = pre_freeze_lr, momentum=0.9)
+optimizer_ft = optim.SGD(base_model.parameters(), lr = pre_freeze_lr, momentum=0.9)
 
 # Decay LR by a factor of 0.1 every 7 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
+print("#"*30)
+
 
 def train_model(model, 
                 criterion, 
@@ -161,7 +186,16 @@ def train_model(model,
     since = time.time()
    
     # defining metric holding variables....
-    best_acc = 0.0
+    train_epoch_loss = 0.0
+    train_epoch_acc = 0.0
+    epoch_wise_loss = []
+    epoch_wise_precision = []
+    epoch_wise_recall = []
+    epoch_wise_f1 = []
+    epoch_wise_acc = []
+    epoch_wise_auc_1 = []
+    epoch_wise_auc_2 = []
+    epoch_wise_auc_3 = []
 
     # Training Epochs....
     for epoch in range(num_epochs):
@@ -185,25 +219,31 @@ def train_model(model,
             with torch.set_grad_enabled(True):
                 outputs = model(inputs)
                 _, preds = torch.max(outputs, 1)
-                loss = criterion(outputs, labels)
+                _, n_labels = torch.max(labels,1)
+                loss = criterion(outputs, n_labels)
 
                 # applying computed gradients....
                 loss.backward()
                 optimizer.step()
 
+        
+
             # statistics
             running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == labels)
+            running_corrects += torch.sum(preds == n_labels)
 
         # learning rate steps....
         scheduler.step()
 
         # averaging epoch loss...
-        epoch_loss = running_loss / dataset_sizes[phase]
-        epoch_acc = running_corrects.double() / dataset_sizes[phase]
+        train_epoch_loss = running_loss / training_data.total_size
+        train_epoch_acc = running_corrects.double() / training_data.total_size
 
         # Validation step...
-        model.eval()   
+        model.eval()  
+        running_loss = 0.0
+        running_corrects = 0
+
         for inputs, labels in tqdm(valid_dataloader, position = 0, leave = True):
             # moving tensors to gpu....
             inputs = inputs.to(device)
@@ -215,27 +255,28 @@ def train_model(model,
             with torch.set_grad_enabled(False):
                 outputs = model(inputs)
                 _, preds = torch.max(outputs, 1)
-                loss = criterion(outputs, labels)
+                _, n_labels = torch.max(labels,1)
+                loss = criterion(outputs, n_labels)
             
             # statistics
             running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == labels.data)
+            running_corrects += torch.sum(preds == n_labels)
         
-        epoch_loss = running_loss / dataset_sizes[phase]
-        epoch_acc = running_corrects.double() / dataset_sizes[phase]
+        val_epoch_loss = running_loss / validation_data.total_size
+        val_epoch_acc = running_corrects.double() / validation_data.total_size
 
 
-        # saving the best validation model....
 
-    
+        print("Training   loss : {} | Training   Accuracy : {}".format(train_epoch_loss, train_epoch_acc))
+        print("Validation loss : {} | Validation Accuracy : {}".format(val_epoch_loss, val_epoch_acc))
+
+
 # Performing Training steps....
 model_ft = train_model(model = base_model, 
                        criterion  = criterion, 
                        optimizer  = optimizer_ft,
                        scheduler  = exp_lr_scheduler,
                        num_epochs = train_epochs)             
-                    
-                    
                     
 
                         
