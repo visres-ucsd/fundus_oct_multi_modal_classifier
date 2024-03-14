@@ -12,13 +12,13 @@ training_nature = "supervised_only"
 model_name = "resnet"
 input_shape = (224,224,3)
 unfreeze_perc = 0.05
-frozen_epochs = 40 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
-pre_freeze_lr = 1e-02
-learning_rate = 1e-02
-dropout = 0.05
+frozen_epochs = 10 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
+pre_freeze_lr = 1e-04
+learning_rate = 1e-04
+dropout = 0.25
 l2_reg = 1e-02
 pool_type = "max"
-dense_1 = 64
+dense_1 = 16
 dense_2 = 32
 dense_3 = 24
 batch_size = 64
@@ -41,6 +41,6 @@ num_classes = len(label_mapping)
 # Creating directory to save runs & best weights.....
 save_dir_name = "./expeiments/" + modality_type + "/"
 model_save_name = model_name + "_shape_" + str(input_shape[0]) + "_pool_" + str(pool_type) + "_dp_" + \
-str(dropout) + "_lr_" + str(learning_rate) + "_dense_" + str(dense_1) + "_" + str(dense_2) + "_" + str(dense_3) + "_base_frozen"
+str(dropout) + "_lr_" + str(learning_rate) + "_dense_" + str(dense_1) + "_" + str(dense_2) + "_" + str(dense_3)
 
 

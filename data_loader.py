@@ -69,14 +69,12 @@ class GenerateDataset(Dataset):
                                                 transforms.RandomHorizontalFlip(),
                                                 transforms.RandomAffine(degrees = (-5,5),
                                                                         translate = (0.05,0.05),
-                                                                        interpolation=transforms.InterpolationMode.BILINEAR),
-                                                transforms.v2.ColorJitter(brightness = 0.1,
-                                                                          contrast = 0.01)])
+                                                                        interpolation=transforms.InterpolationMode.BILINEAR)])
         
         proc_img = self.transform(img_inp)
         if aug_transforms is not None:
             proc_img = aug_transforms(proc_img)
         
         # one hot encoded labels...
-        return proc_img, class_label
+        return proc_img, class_label, self.image_list[idx]
 
