@@ -11,6 +11,7 @@ from PIL import Image
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, roc_auc_score, f1_score
+from focal_loss_imp import *
 import pickle
 import warnings
 warnings.filterwarnings('always')
@@ -20,6 +21,7 @@ warnings.filterwarnings('always')
 from constants import *
 from model import *
 from data_loader import *
+import random
 
 # PyTorch related imports....
 import timm
@@ -42,6 +44,7 @@ from torch.utils.tensorboard import SummaryWriter
 seed = 10
 np.random.seed(seed)
 torch.manual_seed(seed)
+random.seed(seed)
 
 # setting up gpu details
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -52,7 +55,12 @@ label_dict = {}
 with open(label_path, 'rb') as handle:
     label_dict = pickle.load(handle)
 
-patient_ids = np.array(list(set([i.split("_")[0] for i in label_dict.keys()])))
+tmp_dict = {}
+for i in label_dict.keys():
+    name = i.split("_")[0]
+    tmp_dict[name] = 0
+patient_ids = np.array(list(tmp_dict.keys()))
+
 print("Total number of input images       : ",len(label_dict))
 print("Total number of unique patient ids : ",len(patient_ids))
 
@@ -81,9 +89,9 @@ valid_patient_ids = patient_ids[val_index]
 # loading image paths : 
 train_files = []
 valid_files = []
-train_cnt = {"healthy" : 0, "suspects" : 0, "glaucoma" : 0}
-val_cnt   = {"healthy" : 0, "suspects" : 0, "glaucoma" : 0}
-for i in os.listdir(dataset_path):
+train_cnt = {"healthy" : 0,  "glaucoma" : 0}
+val_cnt   = {"healthy" : 0,  "glaucoma" : 0}
+for i in label_dict.keys():
     pid = i.split("_")[0]
     if pid in train_patient_ids:
         train_cnt[label_dict[i]] += 1
@@ -94,21 +102,24 @@ for i in os.listdir(dataset_path):
 
 print("#"*30)
 print("Label distribution :")
-print("Training split   : Healthy : {} | Suspects : {} | Glaucoma : {}".format(train_cnt["healthy"] / len(train_files),
-                                                                               train_cnt["suspects"] / len(train_files),
-                                                                               train_cnt["glaucoma"] / len(train_files)))
+print("Training split   : Healthy : {} | Glaucoma : {}".format(train_cnt["healthy"] / len(train_files),
+                                                               train_cnt["glaucoma"] / len(train_files)))
 
-print("Validation split : Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_cnt["healthy"] / len(valid_files),
-                                                                             val_cnt["suspects"] / len(valid_files),
-                                                                             val_cnt["glaucoma"] / len(valid_files)))
+print("Validation split : Healthy : {} | Glaucoma : {}".format(val_cnt["healthy"] / len(valid_files),
+                                                               val_cnt["glaucoma"] / len(valid_files)))
 
 print("#"*30)
 # building base model
 pre_proc_func = None
 if model_name in ['resnet','mobilenet','densenet']:
     # imagenet pre-processing pipeline...
-    pre_proc_func =  transforms.Compose([transforms.ToTensor(),
-                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])])
+    pre_proc_func =  transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[0.5, 0.5, 0.5],std=[0.5, 0.5, 0.5])])
+                                         #transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])])
+elif model_name in ['dinov2']:
+    pre_proc_func = transforms.Compose([transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+                                        transforms.CenterCrop(input_shape[0]),
+                                        transforms.ToTensor(),
+                                        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),])
 
 # building dataloaders....
 training_data = GenerateDataset(image_files = train_files,
@@ -147,30 +158,34 @@ base_model = build_model()
 trainable_cnt = 0
 total_cnt = 0
 for nm, param in base_model.named_parameters():
-    l_name = str(nm).split(".")[0]
-    if (l_name in ["layer_1","layer_2","layer_3","final_layer"]) & (param.requires_grad):
-        param.requires_grad = True
-        trainable_cnt+=1
-    else:
-        param.requires_grad = False
+    #l_name = str(nm).split(".")[0]
+    #if (l_name in ["layer_1","layer_2","layer_3","final_layer"]) & (param.requires_grad):
+    param.requires_grad = True
+    trainable_cnt+=1
+    #else:
+    #    param.requires_grad = False
 
     total_cnt+=1
 
 print("#"*30)
-print("Percentage of trainable parameters : {:.2f}".format((trainable_cnt / total_cnt)*100))
+print("Percentage of trainabile parameters : {:.2f}".format((trainable_cnt / total_cnt)*100))
 base_model = base_model.to(device)
 
 
 # defining loss & lr decay
+"""
 criterion=torch.hub.load('adeelh/pytorch-multi-class-focal-loss',
                           model='FocalLoss',
                           alpha = torch.tensor(list(training_data.class_weights.values())).to(device),
                           gamma=2,
                           reduction='mean',
                           force_reload=False)
+"""
+# for binary classification cases.....
+criterion=sigmoid_focal_loss
 
 # Observe that all parameters are being optimized
-optimizer_ft = optim.SGD(base_model.parameters(), lr = pre_freeze_lr, momentum=0.9)
+optimizer_ft = optim.Adam(base_model.parameters(), lr = pre_freeze_lr, weight_decay=l2_reg)
 
 # Decay LR by a factor of 0.1 every 12 epochs
 exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
@@ -185,7 +200,8 @@ def train_model(model,
 
     since = time.time()
     best_f1_score = 0.0
-   
+    acc_thresh = 0.5
+
     # defining metric holding variables....
     train_epoch_loss = []
     train_epoch_acc  = []
@@ -216,7 +232,7 @@ def train_model(model,
         random_collection_train_sample = []
         cnt = 0
 
-        for inputs, labels in tqdm(train_dataloader, position = 0, leave = True):
+        for inputs, labels,_ in tqdm(train_dataloader, position = 0, leave = True):
             
             # moving tensors to gpu....
             inputs = inputs.to(device)
@@ -227,19 +243,25 @@ def train_model(model,
 
             with torch.set_grad_enabled(True):
                 outputs = model(inputs)
-                _, preds = torch.max(outputs, 1)
-                _, n_labels = torch.max(labels,1)
-                loss = criterion(outputs, n_labels)
+                preds = (outputs > acc_thresh)*1
+                preds = preds.squeeze(-1)
+
+                loss = criterion(outputs, 
+                                 torch.unsqueeze(labels,-1).type(torch.float), 
+                                 alpha_neg = training_data.class_weights[0], 
+                                 alpha_pos = training_data.class_weights[1],
+                                 gamma = focal_weight,
+                                 reduction = "mean")
 
                 # applying computed gradients....
                 loss.backward()
                 optimizer.step()
-
+    
         
 
             # statistics
             running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == n_labels)
+            running_corrects += torch.sum(preds == labels)
             if cnt in random_batches_train:
                 random_collection_train_sample.append(inputs.detach().cpu()[0])
             cnt+=1
@@ -268,7 +290,7 @@ def train_model(model,
         running_auc_s = 0.0
         running_auc_g = 0.0
 
-        for inputs, labels in tqdm(valid_dataloader, position = 0, leave = True):
+        for inputs, labels,_ in tqdm(valid_dataloader, position = 0, leave = True):
             # moving tensors to gpu....
             inputs = inputs.to(device)
             labels = labels.to(device)
@@ -278,77 +300,73 @@ def train_model(model,
 
             with torch.set_grad_enabled(False):
                 outputs = model(inputs)
-                _, preds = torch.max(outputs, 1)
-                _, n_labels = torch.max(labels,1)
-                loss = criterion(outputs, n_labels)
+                preds = (outputs > acc_thresh)*1
+                preds = preds.squeeze(-1)
+                loss = criterion(outputs, 
+                                 torch.unsqueeze(labels,-1).type(torch.float),
+                                 alpha_neg = validation_data.class_weights[0],
+                                 alpha_pos = validation_data.class_weights[1],
+                                 gamma = focal_weight,
+                                 reduction = "mean")
             
             # statistics
             running_loss += loss.item() * inputs.size(0)
-            running_corrects += torch.sum(preds == n_labels)
+            running_corrects += torch.sum(preds == labels)
+    
 
             # other metrics class wise computation....
-            running_prec_h += precision_score(y_true = labels.detach().cpu().numpy()[:,0],
-                                              y_pred = [1 if (i==0) else 0 for i in preds.detach().cpu().numpy()],
+            running_prec_h += precision_score(y_true = labels.detach().cpu().numpy(),
+                                              y_pred = preds.detach().cpu().numpy(),
+                                              average = "binary",
+                                              pos_label = 1,
                                               zero_division = 0.0)
 
-            running_prec_s += precision_score(y_true = labels.detach().cpu().numpy()[:,1],
-                                              y_pred = [1 if (i==1) else 0 for i in preds.detach().cpu().numpy()],
-                                              zero_division = 0.0)
-
-            running_prec_g += precision_score(y_true = labels.detach().cpu().numpy()[:,2],
-                                              y_pred = [1 if (i==2) else 0 for i in preds.detach().cpu().numpy()],
+            running_prec_g += precision_score(y_true = labels.detach().cpu().numpy(),
+                                              y_pred = preds.detach().cpu().numpy(),
+                                              average = "binary",
+                                              pos_label = 0,
                                               zero_division = 0.0)
 
             #######################################################
-            running_recall_h += recall_score(y_true = labels.detach().cpu().numpy()[:,0],
-                                             y_pred = [1 if (i==0) else 0 for i in preds.detach().cpu().numpy()],
-                                             zero_division = 0.0)
+            running_recall_h += recall_score(y_true = labels.detach().cpu().numpy(),
+                                              y_pred = preds.detach().cpu().numpy(),
+                                              average = "binary",
+                                              pos_label = 1,
+                                              zero_division = 0.0)
 
-            running_recall_s += recall_score(y_true = labels.detach().cpu().numpy()[:,1],
-                                             y_pred = [1 if (i==1) else 0 for i in preds.detach().cpu().numpy()],
-                                             zero_division = 0.0)
+            running_recall_g += recall_score(y_true = labels.detach().cpu().numpy(),
+                                              y_pred = preds.detach().cpu().numpy(),
+                                              average = "binary",
+                                              pos_label = 0,
+                                              zero_division = 0.0)
 
-            running_recall_g += recall_score(y_true = labels.detach().cpu().numpy()[:,2],
-                                             y_pred = [1 if (i==2) else 0 for i in preds.detach().cpu().numpy()],
-                                             zero_division = 0.0)
 
-            running_f1 += f1_score(y_true = n_labels.detach().cpu().numpy(),
+            running_f1 += (f1_score(y_true = labels.detach().cpu().numpy(),
                                    y_pred = preds.detach().cpu().numpy(),
-                                   average = "macro")
+                                   average = "binary",
+                                   pos_label = 0) + f1_score(y_true = labels.detach().cpu().numpy(),
+                                   y_pred = preds.detach().cpu().numpy(),
+                                   average = "binary",
+                                   pos_label = 1))/2
+
 
             #######################################################
             try:
-                running_auc_h += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,0],
-                                               y_score = outputs.detach().cpu().numpy()[:,0])
+                running_auc_h += roc_auc_score(y_true  = labels.detach().cpu().numpy(),
+                                               y_score = outputs.detach().cpu().numpy())
             except:
                 running_auc_h += 0
-
-            try:
-                running_auc_s += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,1],
-                                               y_score = outputs.detach().cpu().numpy()[:,1])
-            except:
-                running_auc_s +=0
-
-            try:
-                running_auc_g += roc_auc_score(y_true  = labels.detach().cpu().numpy()[:,2],
-                                               y_score = outputs.detach().cpu().numpy()[:,2])
-            except:
-                running_auc_g += 0
         
 
         # Averaging Metric Values for plotting.....
         val_epoch_loss.append(running_loss / validation_data.total_size)
         val_epoch_acc.append(running_corrects.double() / validation_data.total_size)
         val_epoch_prec_h.append(running_prec_h /len(valid_dataloader))
-        val_epoch_prec_s.append(running_prec_s /len(valid_dataloader))
         val_epoch_prec_g.append(running_prec_g /len(valid_dataloader))
         val_epoch_recall_h.append(running_recall_h /len(valid_dataloader))
-        val_epoch_recall_s.append(running_recall_s /len(valid_dataloader))
         val_epoch_recall_g.append(running_recall_g /len(valid_dataloader))
         val_epoch_f1.append(running_f1 / len(valid_dataloader))
         val_epoch_auc_h.append(running_auc_h /len(valid_dataloader))
-        val_epoch_auc_s.append(running_auc_s /len(valid_dataloader))
-        val_epoch_auc_g.append(running_auc_g /len(valid_dataloader))
 
         # Tensorboard metric plotting....
         summary_writer.add_scalar('Loss/train', train_epoch_loss[-1], epoch)
@@ -356,16 +374,12 @@ def train_model(model,
         summary_writer.add_scalar('Loss/valid', val_epoch_loss[-1], epoch)
         summary_writer.add_scalar('Acc/valid', val_epoch_acc[-1], epoch)
         summary_writer.add_scalar('Healthy Precision/valid', val_epoch_prec_h[-1], epoch)
-        summary_writer.add_scalar('Suspect Precision/valid', val_epoch_prec_s[-1], epoch)
         summary_writer.add_scalar('Glaucoma Precision/valid', val_epoch_prec_g[-1], epoch)
         summary_writer.add_scalar('Healthy Recall/valid', val_epoch_recall_h[-1], epoch)
-        summary_writer.add_scalar('Suspect Recall/valid', val_epoch_recall_s[-1], epoch)
         summary_writer.add_scalar('Glaucoma Recall/valid', val_epoch_recall_g[-1], epoch)
         summary_writer.add_scalar('F1 score overall/valid', val_epoch_f1[-1], epoch)
-        summary_writer.add_scalar('Health   AUC/valid', val_epoch_auc_h[-1], epoch)
-        summary_writer.add_scalar('Suspect  AUC/valid', val_epoch_auc_s[-1], epoch)
-        summary_writer.add_scalar('Glaucoma AUC/valid', val_epoch_auc_g[-1], epoch)
-        #summary_writer.add_images('Augmented Images/ Train', torch.Tensor(random_collection_train_sample), epoch)
+        summary_writer.add_scalar('AUC/valid', val_epoch_auc_h[-1], epoch)
+        summary_writer.add_images('Augmented Images/ Train', torch.stack(random_collection_train_sample, dim = 0), epoch)
 
 
         print("Training   loss : {} | Training   Accuracy : {}".format(train_epoch_loss[-1], train_epoch_acc[-1]))
@@ -376,13 +390,24 @@ def train_model(model,
             torch.save(model.state_dict(), save_dir_name + model_name + "/best_f1_score_model.pt")
             best_f1_score = val_epoch_f1[-1]
 
-            print("Validation Precision -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_prec_h[-1], val_epoch_prec_s[-1], val_epoch_prec_g[-1]))
-            print("Validation Recall    -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_recall_h[-1], val_epoch_recall_s[-1], val_epoch_recall_g[-1]))
-            print("Validation AUC       -  Healthy : {} | Suspects : {} | Glaucoma : {}".format(val_epoch_auc_h[-1], val_epoch_auc_s[-1], val_epoch_auc_g[-1]))
-            print("Validation F1 Score  : {}".format(val_epoch_f1[-1]))
+            print("Validation Precision -  Healthy : {} | Glaucoma : {}".format(val_epoch_prec_h[-1],   val_epoch_prec_g[-1]))
+            print("Validation Recall    -  Healthy : {} | Glaucoma : {}".format(val_epoch_recall_h[-1], val_epoch_recall_g[-1]))
+            print("Validation AUC       -  {}".format(val_epoch_auc_h[-1]))
+            print("Validation F1 Score  -  {}".format(val_epoch_f1[-1]))
 
-      
+        """ 
+        if epoch == frozen_epochs:
+            print("Unfreezing all layers of the model...")
+            for nm, param in model.named_parameters():
+                param.requires_grad = True
 
+            # changing the learning rate of the model...
+            optimizer = optim.Adam(model.parameters(), lr = learning_rate, weight_decay=l2_reg)
+            scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+            print("New learning rate :",learning_rate)
+        """
+    
+            
 # Performing Training steps....
 model_ft = train_model(model = base_model, 
                        criterion  = criterion, 

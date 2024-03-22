@@ -5,17 +5,18 @@ modality_type = "fundus"
 project_dir = "/tscc/nfs/home/vejoshi/oct_fundus_project/"
 dataset_dir = project_dir + "oct_fundus_dataset/"
 dataset_path = dataset_dir + "fundus_images/" if modality_type == "fundus" else dataset_dir+"oct_images/"
-label_path   = dataset_dir + "fundus_labels.pickle"
+label_path   = dataset_dir + "fundus_labels_binary.pickle"
 
 # training constants
 training_nature = "supervised_only"
-model_name = "resnet"
+model_name = "dinov2"
 input_shape = (224,224,3)
 unfreeze_perc = 0.05
 frozen_epochs = 10 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
 pre_freeze_lr = 1e-04
 learning_rate = 1e-04
-dropout = 0.25
+dropout = 0.35
+focal_weight = 2.0
 l2_reg = 1e-02
 pool_type = "max"
 dense_1 = 16
@@ -31,9 +32,13 @@ lr_scale = 0.1
 lab_smooth = 0.13
 
 # Label constants...
+"""
 label_mapping = {"healthy"  : [1,0,0],
                  "suspects" : [0,1,0],
                  "glaucoma" : [0,0,1]}
+"""
+label_mapping = {"healthy" :  1,
+                 "glaucoma" : 0}
 
 num_classes = len(label_mapping)
 

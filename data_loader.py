@@ -24,6 +24,7 @@ class GenerateDataset(Dataset):
         self.image_list = image_files
         # one hot encoded labels......
         self.labels = [label_mapping[labels_dict[i.split("/")[-1]]] for i in self.image_list]
+
         
         self.labels = np.array(self.labels)
         self.image_list = np.array(self.image_list)
@@ -43,12 +44,12 @@ class GenerateDataset(Dataset):
 
         # inverse of class proportion serves as the class weights 
         # more frequent the class is, less is the associated class weight....
-        self.class_weights = {i : (1/len(self.labels[self.labels[:,i] == 1])) * (self.total_size / num_classes)
-                              for i in range(len(label_mapping))}
+        self.class_weights = {0 : (1/len(self.labels[self.labels[:] == 0]))*(self.total_size/ num_classes),
+                              1 : (1/len(self.labels[self.labels[:] == 1]))*(self.total_size/ num_classes)}
 
         print("Class weights are : ")
         for ct,i in enumerate(label_mapping):
-            freq = len(self.labels[self.labels[:,ct] == 1])
+            freq = len(self.labels[self.labels[:] == ct])
             print("Class Name : {} | Frequency : {} | Weight : {}".format(i, freq, self.class_weights[ct]))
 
 
