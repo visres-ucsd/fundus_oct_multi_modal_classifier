@@ -128,6 +128,7 @@ training_data = GenerateDataset(image_files = train_files,
                                 augment = True,
                                 shuffle   = True,
                                 transform = pre_proc_func,
+                                apply_random_prob = aug_prob,
                                 split_flag = "training")
 
 validation_data = GenerateDataset(image_files = valid_files,

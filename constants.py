@@ -9,14 +9,14 @@ label_path   = dataset_dir + "fundus_labels_binary.pickle"
 
 # training constants
 training_nature = "supervised_only"
-model_name = "dinov2"
+model_name = "resnet"
 input_shape = (224,224,3)
 unfreeze_perc = 0.05
 frozen_epochs = 10 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
 pre_freeze_lr = 1e-04
 learning_rate = 1e-04
-dropout = 0.35
-focal_weight = 2.0
+dropout = 0.30
+focal_weight = 2.5
 l2_reg = 1e-02
 pool_type = "max"
 dense_1 = 16
@@ -30,6 +30,7 @@ patience = 10
 reduce_lr_patience = 3
 lr_scale = 0.1
 lab_smooth = 0.13
+aug_prob = 0.4
 
 # Label constants...
 """
