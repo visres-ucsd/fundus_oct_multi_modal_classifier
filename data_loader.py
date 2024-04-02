@@ -61,7 +61,7 @@ class GenerateDataset(Dataset):
     def __getitem__(self, idx):
 
         # fetching image & label....
-        img_inp     = PIL.Image.open(self.image_list[idx]).resize(self.img_res)
+        img_inp     = PIL.Image.open(self.image_list[idx]).convert('RGB').resize(self.img_res)
         class_label = self.labels[idx]
 
         # point to experiment further........
@@ -72,9 +72,9 @@ class GenerateDataset(Dataset):
                                                  transforms.RandomHorizontalFlip(),
                                                  transforms.Pad((50,50,50,50),padding_mode = "reflect"),
                                                  transforms.RandomAffine(degrees = (-10,10), translate = (0.1,0.1), interpolation=transforms.InterpolationMode.BILINEAR),
-                                                 transforms.CenterCrop(size = self.img_res[0]),
-                                                 transforms.ColorJitter(brightness = (1.0,1.2), contrast = (1.0,1.2), saturation = (1.0,1.2)),
-                                                 transforms.GaussianBlur(5, (1.0,3.0))])
+                                                 transforms.CenterCrop(size = self.img_res[0]),])
+                                                 #transforms.ColorJitter(brightness = (1.0,1.2), contrast = (1.0,1.2), saturation = (1.0,1.2)),
+                                                 #transforms.GaussianBlur(5, (1.0,3.0))])
                                                                         
         proc_img = img_inp
         if aug_transforms is not None:

@@ -35,6 +35,8 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 torchvision.disable_beta_transforms_warning()
 import torchvision.transforms.v2  as transforms
+from transformers import ViTImageProcessor
+
 
 # tensorboard related imports...
 from torch.utils.tensorboard import SummaryWriter
@@ -113,13 +115,23 @@ print("#"*30)
 pre_proc_func = None
 if model_name in ['resnet','mobilenet','densenet']:
     # imagenet pre-processing pipeline...
-    pre_proc_func =  transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[0.5, 0.5, 0.5],std=[0.5, 0.5, 0.5])])
-                                         #transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])])
+    pre_proc_func =  transforms.Compose([transforms.ToTensor(),
+                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225])])
 elif model_name in ['dinov2']:
     pre_proc_func = transforms.Compose([transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
                                         transforms.CenterCrop(input_shape[0]),
+                                        transforms.ToTensor(),])
+                                        #transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),])
+elif model_name in ['vit']:
+    processor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224-in21k')
+    mu, sigma = processor.image_mean, processor.image_std
+    size = processor.size
+    norm = transforms.Normalize(mean=mu, std=sigma) #normalize image pixels range to [-1,1]
+
+    pre_proc_func = transforms.Compose([transforms.Resize(size['height']),
                                         transforms.ToTensor(),
-                                        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),])
+                                        norm])
+
 
 # building dataloaders....
 training_data = GenerateDataset(image_files = train_files,
@@ -158,11 +170,16 @@ base_model = build_model()
 # Freezing the base model & only unfreezing the top added layers......
 trainable_cnt = 0
 total_cnt = 0
+num_layers = sum(1 for _ in base_model.named_parameters())
+limit = num_layers - int(num_layers*unfreeze_perc)
 for nm, param in base_model.named_parameters():
     #l_name = str(nm).split(".")[0]
     #if (l_name in ["layer_1","layer_2","layer_3","final_layer"]) & (param.requires_grad):
-    param.requires_grad = True
-    trainable_cnt+=1
+    if total_cnt < limit:
+        param.required_grad = False
+    else:
+        param.requires_grad = True
+        trainable_cnt+=1
     #else:
     #    param.requires_grad = False
 
@@ -184,12 +201,13 @@ criterion=torch.hub.load('adeelh/pytorch-multi-class-focal-loss',
 """
 # for binary classification cases.....
 criterion=sigmoid_focal_loss
+#criterion = nn.BCELoss()
 
 # Observe that all parameters are being optimized
-optimizer_ft = optim.Adam(base_model.parameters(), lr = pre_freeze_lr, weight_decay=l2_reg)
+optimizer_ft = optim.SGD(base_model.parameters(), lr = pre_freeze_lr, weight_decay=l2_reg)
 
 # Decay LR by a factor of 0.1 every 12 epochs
-exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=15, gamma=0.1)
 print("#"*30)
 
 
@@ -244,16 +262,18 @@ def train_model(model,
 
             with torch.set_grad_enabled(True):
                 outputs = model(inputs)
+            
+
                 preds = (outputs > acc_thresh)*1
                 preds = preds.squeeze(-1)
-
+            
                 loss = criterion(outputs, 
                                  torch.unsqueeze(labels,-1).type(torch.float), 
                                  alpha_neg = training_data.class_weights[0], 
                                  alpha_pos = training_data.class_weights[1],
                                  gamma = focal_weight,
                                  reduction = "mean")
-
+            
                 # applying computed gradients....
                 loss.backward()
                 optimizer.step()
@@ -303,6 +323,7 @@ def train_model(model,
                 outputs = model(inputs)
                 preds = (outputs > acc_thresh)*1
                 preds = preds.squeeze(-1)
+                
                 loss = criterion(outputs, 
                                  torch.unsqueeze(labels,-1).type(torch.float),
                                  alpha_neg = validation_data.class_weights[0],
