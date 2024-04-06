@@ -3,9 +3,10 @@
 # file paths....
 modality_type = "fundus"
 project_dir = "/tscc/nfs/home/vejoshi/oct_fundus_project/"
-dataset_dir = project_dir + "oct_fundus_dataset/"
-dataset_path = dataset_dir + "fundus_images/" if modality_type == "fundus" else dataset_dir+"oct_images/"
-label_path   = dataset_dir + "fundus_labels_binary.pickle"
+dataset_dir    = project_dir + "oct_fundus_dataset/"
+dataset_path   = dataset_dir + "fundus_images/" if modality_type == "fundus" else dataset_dir+"oct_images/"
+label_path     = dataset_dir + "fundus_labels_binary_small_version.pickle"
+test_ids_paths = dataset_dir + "test_patient_ids_fundus_oct.pickle"
 
 # training constants
 training_nature = "supervised_only"
@@ -15,12 +16,12 @@ unfreeze_perc = 1.0
 frozen_epochs = 10 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
 pre_freeze_lr = 1e-02
 learning_rate = 1e-02
-dropout = 0.25
-focal_weight = 2.5
-l2_reg = 1e-02
+dropout = 0.4
+focal_weight = 2.0
+l2_reg = 1e-03
 pool_type = "max"
-dense_1 = 16
-dense_2 = 32
+dense_1 = 128
+dense_2 = 64
 dense_3 = 24
 batch_size = 32
 decision_threshold = 0.5 # used by metrics
@@ -30,7 +31,7 @@ patience = 10
 reduce_lr_patience = 3
 lr_scale = 0.1
 lab_smooth = 0.13
-aug_prob = 0.3
+aug_prob = 0.9
 
 # Label constants...
 """
@@ -38,8 +39,8 @@ label_mapping = {"healthy"  : [1,0,0],
                  "suspects" : [0,1,0],
                  "glaucoma" : [0,0,1]}
 """
-label_mapping = {"healthy" :  1,
-                 "glaucoma" : 0}
+label_mapping = {"glaucoma" : 0,
+                 "healthy"  : 1}
 
 num_classes = len(label_mapping)
 

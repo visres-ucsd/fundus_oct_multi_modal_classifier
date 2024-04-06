@@ -53,9 +53,12 @@ class classificationModel(nn.Module):
 
             self.layer_1 = nn.Linear(base_ft_cnt, dense_1)
             #self.layer_2 = nn.Linear(dense_1, dense_2)
+            
             #self.layer_3 = nn.Linear(dense_2, dense_3)
+
             self.final_layer = nn.Linear(dense_1, 1)
             self.activation_func = nn.ReLU()
+            
             #self.final_activation = nn.Softmax(dim=1)
             self.final_activation = nn.Sigmoid()
             self.drop_out_layer = nn.Dropout(p=dropout)
@@ -79,14 +82,16 @@ class classificationModel(nn.Module):
             # first block.....
             x = self.layer_1(x)
             x = self.activation_func(x)
-            x = self.drop_out_layer(x)
+            
+            #x = self.drop_out_layer(x)
             
             """
             # second block
             x = self.layer_2(x)
             x = self.activation_func(x)
-            x = self.drop_out_layer(x)
-        
+            
+            #x = self.drop_out_layer(x)
+            
             # third block
             x = self.layer_3(x)
             x = self.activation_func(x)
@@ -96,6 +101,7 @@ class classificationModel(nn.Module):
             # final prediction 
             x = self.final_layer(x)
             x = self.final_activation(x)
+
         elif (self.hf_flag =="dino") or (self.hf_flag == "vit"):
             x = self.encoder(x).logits
             x = self.final_activation(x)
@@ -114,7 +120,7 @@ def build_model():
     
     hf_flag = "resnet"
     if model_name == "resnet":
-        model_ft = models.resnet50()
+        model_ft = models.resnet50(weights="IMAGENET1K_V2")
     elif model_name == "dinov2":
         model_ft = Dinov2ForImageClassification.from_pretrained("facebook/dinov2-small-imagenet1k-1-layer")
         hf_flag = "dino"

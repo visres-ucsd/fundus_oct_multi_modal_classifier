@@ -57,14 +57,26 @@ label_dict = {}
 with open(label_path, 'rb') as handle:
     label_dict = pickle.load(handle)
 
+# test patient ids loaded 
+with open(test_ids_paths, 'rb') as handle:
+    test_ids_list = pickle.load(handle)
+
 tmp_dict = {}
+dropped = {}
 for i in label_dict.keys():
     name = i.split("_")[0]
+    if name in test_ids_list:
+        dropped[name] = 0
+        continue
+
     tmp_dict[name] = 0
+
 patient_ids = np.array(list(tmp_dict.keys()))
 
-print("Total number of input images       : ",len(label_dict))
-print("Total number of unique patient ids : ",len(patient_ids))
+print("Total number of input images           : ",len(label_dict))
+print("Total number of unique patient ids     : ",len(patient_ids))
+print("Total number of dropped patient ids    : ",len(dropped))
+print("Total number of final test patient ids : ",len(test_ids_list))
 
 # Details of model weight saving...
 print("Model save name :",model_save_name)
