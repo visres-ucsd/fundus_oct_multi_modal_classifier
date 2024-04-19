@@ -1,27 +1,28 @@
 # file to store all code constants for training
 
 # file paths....
-modality_type = "fundus"
+modality_type = "oct"
 project_dir = "/tscc/nfs/home/vejoshi/oct_fundus_project/"
 dataset_dir    = project_dir + "oct_fundus_dataset/"
 dataset_path   = dataset_dir + "fundus_images/" if modality_type == "fundus" else dataset_dir+"oct_images/"
-label_path     = dataset_dir + "fundus_labels_binary_small_version.pickle"
+label_path     = dataset_dir + "fundus_labels_binary_small_version.pickle" if modality_type == "fundus" else dataset_dir + "oct_labels_binary_small_version.pickle"
 test_ids_paths = dataset_dir + "test_patient_ids_fundus_oct.pickle"
 
 # training constants
+use_aug = True
 training_nature = "supervised_only"
 model_name = "resnet"
 input_shape = (224,224,3)
 unfreeze_perc = 1.0
 frozen_epochs = 10 # keep the base model weights frozen for these many epochs otherwise the classification heads would damage the
 pre_freeze_lr = 1e-02
-learning_rate = 1e-02
+learning_rate = 1e-03
 dropout = 0.4
-focal_weight = 2.0
-l2_reg = 1e-03
+focal_weight = 4.0
+l2_reg = 1e-02
 pool_type = "max"
-dense_1 = 128
-dense_2 = 64
+dense_1 = 8
+dense_2 = 12
 dense_3 = 24
 batch_size = 32
 decision_threshold = 0.5 # used by metrics

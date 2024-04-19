@@ -149,7 +149,7 @@ elif model_name in ['vit']:
 training_data = GenerateDataset(image_files = train_files,
                                 labels_dict = label_dict,
                                 img_res = input_shape[0],
-                                augment = True,
+                                augment = use_aug,
                                 shuffle   = True,
                                 transform = pre_proc_func,
                                 apply_random_prob = aug_prob,

@@ -8,6 +8,40 @@ from constants import *
 import PIL
 import numpy as np
 
+
+class H_random_translate(object):
+    """
+    Class to perform random Horizontal translation with image wraping....
+
+    Args:
+        perc_motion : (float) maximum % of image width to move left or right (sampled randomly)
+    """
+
+    def __init__(self, perc_motion = 0.1):
+        self.perc_motion = perc_motion
+
+    def __call__(self, sample):
+
+        # performing wraping...
+        total_width = sample.size[1]*3
+        max_height  = sample.size[0]
+        new_im = Image.new('RGB', (total_width, max_height))
+
+        # concating the same image on right & left....
+        x_offset = 0
+        for i in range(3):
+            new_im.paste(sample, (x_offset,0))
+            x_offset+= sample.size[1]
+
+        # random ranges for horizontal translation 
+        motion_limit = int(sample.size[1]*self.perc_motion)
+        crop_coord = torch.randint(-1*motion_limit, motion_limit, (1,)).numpy()[0]
+    
+        # wrapping cropping...
+        proc_img = transforms.functional.crop(new_im, top = 0, left = sample.size[1] + crop_coord, height = 224, width = 224) 
+        
+        return proc_img
+
 # data loader helper class
 class GenerateDataset(Dataset):
     def __init__(self,
@@ -67,15 +101,28 @@ class GenerateDataset(Dataset):
         # point to experiment further........
         aug_transforms = None
         if self.augment:
-            # augmentation params computed for fundus images....
-            aug_transforms = transforms.Compose([transforms.RandomResizedCrop(size = 224, scale = (0.7,1.0)),
-                                                 transforms.RandomHorizontalFlip(),
-                                                 transforms.Pad((50,50,50,50),padding_mode = "reflect"),
-                                                 transforms.RandomAffine(degrees = (-10,10), translate = (0.1,0.1), interpolation=transforms.InterpolationMode.BILINEAR),
-                                                 transforms.CenterCrop(size = self.img_res[0]),])
-                                                 #transforms.ColorJitter(brightness = (1.0,1.2), contrast = (1.0,1.2), saturation = (1.0,1.2)),
-                                                 #transforms.GaussianBlur(5, (1.0,3.0))])
-                                                                        
+
+            # augmentations for FUNDUS IMAGES :
+            if modality_type  == "fundus":
+                # augmentation params computed for fundus images....
+                aug_transforms = transforms.Compose([transforms.RandomResizedCrop(size = 224, scale = (0.9,1.0)),
+                                                     transforms.RandomHorizontalFlip(),
+                                                     #transforms.Pad((50,50,50,50),padding_mode = "reflect"),
+                                                     transforms.RandomAffine(degrees = (-5,5), translate = (0.1,0.1), interpolation=transforms.InterpolationMode.BILINEAR),])
+                                                     #transforms.CenterCrop(size = self.img_res[0]),])
+                                                     #transforms.ColorJitter(brightness = (1.0,1.2), contrast = (1.0,1.2), saturation = (1.0,1.2)),
+                                                     #transforms.GaussianBlur(5, (1.0,3.0))])
+            # augmentations for OCT IMAGES :
+            else:
+                aug_transforms = transforms.Compose([H_random_translate(perc_motion = 0.25),
+                                                     transforms.RandomAffine(degrees = (-5,5), 
+                                                                             translate = (0.0,0.1), 
+                                                                             interpolation=transforms.InterpolationMode.BILINEAR),
+                                                     transforms.ColorJitter(brightness = 0.3)])
+
+
+        
+        # randomness to apply all augmentations....
         proc_img = img_inp
         if aug_transforms is not None:
             toss = np.random.choice([0,1],p=[1-self.apply_random_prob, self.apply_random_prob])
