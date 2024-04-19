@@ -25,7 +25,7 @@ class H_random_translate(object):
         # performing wraping...
         total_width = sample.size[1]*3
         max_height  = sample.size[0]
-        new_im = Image.new('RGB', (total_width, max_height))
+        new_im = PIL.Image.new('RGB', (total_width, max_height))
 
         # concating the same image on right & left....
         x_offset = 0
